@@ -2,17 +2,6 @@
 
 ## Attempt to collect all the relevant analyses for the first draft of the paper into a single pipeline
 
-## 1. Copy over raw call files
-SRCDIR=/lustre/scratch116/vr/user/pd3/hipsci/exome-point-mutations/unified-set/final-set-2018-02-05.all
-rsync -av --progress $SRCDIR/exomes.ft.txt.gz Data/newCalls2/raw/
-rsync -av --progress $SRCDIR/high-vs-low-exomes.ft.txt.gz Data/newCalls2/raw/
-rsync -av --progress $SRCDIR/wgs.396.ft.txt.gz Data/newCalls2/raw/
-
-## 1.1 Copy over FDR thresholds - code/masterAnalysis/fdrThresholds.txt is hand edited
-cp code/masterAnalysis/fdrThresholds.txt code/newCalls/fdr-wes.txt
-cp code/masterAnalysis/fdrThresholds.txt code/newCalls/fdr-hwes.txt
-cp code/masterAnalysis/fdrThresholds.txt code/newCalls/fdr-wgs.txt 
-
 ## 2. Preprocess call files
 bsub -M6000 -q normal -J process.WES -o farmOut/process.WES.%J.stdout -e farmOut/process.WES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/newCalls/runCalling-v2.sh Data/newCalls2/raw/exomes.ft.txt.gz Data/newCalls2 wes 0
 bsub -M6000 -q normal -J process.HWES -o farmOut/process.HWES.%J.stdout -e farmOut/process.HWES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/newCalls/runCalling-v2.sh Data/newCalls2/raw/high-vs-low-exomes.ft.txt.gz Data/newCalls2 hwes 0
