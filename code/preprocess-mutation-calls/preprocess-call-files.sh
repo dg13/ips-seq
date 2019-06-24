@@ -1,14 +1,8 @@
-#!/bin/sh -e
+#!/usr/bin/env bash
 
 ## Wrapper to run all the basic filtering for a call set
 
-SCRDIR=$(dirname $0)
-if [ ! -e $SCRDIR/../utils/variables.sh ]
-then
-     echo "$0: Error $SCRDIR/../utils/variables.sh not found" 1>&2
-     exit 1
-fi
-source $SCRDIR/../utils/variables.sh
+. ./code/utils/funcs2.sh
 
 ## Functions
 doSort() {
@@ -26,8 +20,8 @@ doRle() {
     OUTF=$2
     OUTF=`echo $OUTF | sed 's/\.gz$//'`
     message "$0: Doing RLE for $INF"
-    message "$0: R --vanilla --slave --args $INF $OUTF < code/newCalls/makeRleOfPositions-v2.R"
-    R --vanilla --slave --args $INF $OUTF < code/newCalls/makeRleOfPositions-v2.R
+    message "$0: R --vanilla --slave --args $INF $OUTF < code/preprocess-mutation-calls/makeRleOfPositions.R"
+    R --vanilla --slave --args $INF $OUTF < code/preprocess-mutation-calls/makeRleOfPositions.R
     message "$0: gzip'ing $OUTF"
     gzip -f $OUTF
 }
@@ -37,8 +31,8 @@ doMarkDinucs() {
     RLEFILE=$2
     OUTF=$3
     message "$0: Doing dinuc marking, > 2 mutated nucs removed for $INF"
-    message "$0: ./code/newCalls/markDinucs.pl $SORTEDFILE $RLEFILE  | awk '\$NF<3' | gzip > $OUTF"
-    ./code/newCalls/markDinucs.pl $SORTEDFILE $RLEFILE  | awk '$NF<3' | gzip > $OUTF ## $NF<3 filters any line where last field is >2, removing multinucleotide runs
+    message "$0: ./code/preprocess-mutation-calls/markDinucs.pl $SORTEDFILE $RLEFILE  | awk '\$NF<3' | gzip > $OUTF"
+    ./code/preprocess-mutation-calls/markDinucs.pl $SORTEDFILE $RLEFILE  | awk '$NF<3' | gzip > $OUTF ## $NF<3 filters any line where last field is >2, removing multinucleotide runs
 }
 
 ## Check CL options
@@ -95,12 +89,12 @@ fi
 FDRDIR=$MSTROUTDIR/fdrCallSets
 if [ $STEP -le 3 ]
 then
-    FDRTHRESH=$SCRDIR/fdr-${STEM}.txt
+    FDRTHRESH=Data/mut-files/fdr-thresholds/fdr-${STEM}.txt
     checkFileExists $FDRTHRESH ## Needs to be created by hand
     mkdirIfDoesntExist $FDRDIR
     message "$0: Doing FDR call sets"
-    message "$0: ./code/newCalls/makeFdr.sh $DINUCFILE $OUTDIR $THRESHFILE mut-${STEM}"
-    ./code/newCalls/makeFdr-v2.sh $DINUCFILE $FDRDIR $FDRTHRESH mut-${STEM}
+    message "$0: ./code/preprocess-mutation-calls/makeFdr.sh $DINUCFILE $OUTDIR $THRESHFILE mut-${STEM}"
+    ./code/preprocess-mutation-calls/makeFdr.sh $DINUCFILE $FDRDIR $FDRTHRESH mut-${STEM}
 fi
 
 ## 5. Select highest impact mutation in BCSQ field
@@ -110,8 +104,8 @@ then
     checkDirExists $FDRDIR
     mkdirIfDoesntExist $BCSFDIR
     message "$0: Running BCSQ field filtering"
-    message "$0: ./code/newCalls/filterBcsqField.sh $FDRDIR $OUTDIR mut-${STEM}"
-    ./code/newCalls/filterBcsqField-v2.sh $FDRDIR $BCSFDIR mut-${STEM}
+    message "$0: ./code/preprocess-mutation-calls/filterBcsqField.sh $FDRDIR $OUTDIR mut-${STEM}"
+    ./code/preprocess-mutation-calls/filterBcsqField.sh $FDRDIR $BCSFDIR mut-${STEM}
 fi
 
 ## 6. Collapse dinucs
@@ -121,6 +115,6 @@ then
     checkDirExists $BCSFDIR
     mkdirIfDoesntExist $DINUCDIR
     message "$0: Running dinucleotide collapsing"
-    message "$0: ./code/newCalls/collapseDinucs.sh $BCSFDIR $DINUCDIR mut-${STEM}"
-    ./code/newCalls/collapseDinucs-v2.sh $BCSFDIR $DINUCDIR mut-${STEM}
+    message "$0: ./code/preprocess-mutation-calls/collapseDinucs.sh $BCSFDIR $DINUCDIR mut-${STEM}"
+    ./code/preprocess-mutation-calls/collapseDinucs.sh $BCSFDIR $DINUCDIR mut-${STEM}
 fi    

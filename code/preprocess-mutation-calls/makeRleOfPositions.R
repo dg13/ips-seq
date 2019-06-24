@@ -1,0 +1,17 @@
+cargs <- commandArgs(trail=TRUE)
+if(length(cargs)!=2)
+    stop("Usage: R --args <sortedFile> <rleOutput>")
+inFile <- cargs[1]
+outFile <- cargs[2]
+message("Extracting positions from ",inFile)
+tFile <- tempfile()
+cmd <- paste("gunzip -c ",inFile," | awk '{ printf \"%d\\n\",$2 }' > ",tFile)
+message("Running: ",cmd)
+system(cmd)
+d <- read.table(tFile,strings=F)       
+rl <- rle(diff(d[,1])==1)
+rl1 <- cbind(rl$lengths,rl$values)
+rl1 <- cbind(cumsum(rl1[,1]),rl1)
+message("Writing to ",outFile)
+write.table(rl1,file=outFile,qu=F,row=F,col=F)
+system(paste("rm -f",tFile))

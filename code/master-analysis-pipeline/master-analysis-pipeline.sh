@@ -1,11 +1,19 @@
 #!/bin/sh -e
 
 ## Attempt to collect all the relevant analyses for the first draft of the paper into a single pipeline
+## This script should unpack everything and requires two things
+## 1. A raw mutation call directory (with results of Fisher Tests, and bcfs) located in Data/mut-files/raw
+## 2. FDR threshold files (one per data set, but each using the same thresholds) located in Data/mut-files/fdr-thresholds
+
+## 1. Create dataset specific threshold files - these are now the same, but there's a separate file for historical reasons
+ln -s fdrThresholds.txt Data/mut-files/fdr-thresholds/fdr-wes.txt
+ln -s fdrThresholds.txt Data/mut-files/fdr-thresholds/fdr-hwes.txt
+ln -s fdrThresholds.txt Data/mut-files/fdr-thresholds/fdr-wgs.txt
 
 ## 2. Preprocess call files
-bsub -M6000 -q normal -J process.WES -o farmOut/process.WES.%J.stdout -e farmOut/process.WES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/newCalls/runCalling-v2.sh Data/newCalls2/raw/exomes.ft.txt.gz Data/newCalls2 wes 0
-bsub -M6000 -q normal -J process.HWES -o farmOut/process.HWES.%J.stdout -e farmOut/process.HWES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/newCalls/runCalling-v2.sh Data/newCalls2/raw/high-vs-low-exomes.ft.txt.gz Data/newCalls2 hwes 0
-bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOut/process.WGS.%J.stderr -R"select[mem>10000] rusage[mem=10000] span[hosts=1]" -n4 ./code/newCalls/runCalling-v2.sh Data/newCalls2/raw/wgs.396.ft.txt.gz Data/newCalls2 wgs 0
+bsub -M6000 -q normal -J process.WES -o farmOut/process.WES.%J.stdout -e farmOut/process.WES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/exomes.ft.txt.gz Data/mut-files wes 0
+bsub -M6000 -q normal -J process.HWES -o farmOut/process.HWES.%J.stdout -e farmOut/process.HWES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/high-vs-low-exomes.ft.txt.gz Data/mut-files hwes 0
+bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOut/process.WGS.%J.stderr -R"select[mem>10000] rusage[mem=10000] span[hosts=1]" -n4 ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/wgs.396.ft.txt.gz Data/mut-files wgs 0
 
 ## 3. Make the source R data structs
 ./code/masterAnalysis/masterAnalysis-v5/makeAllDataStructs.sh
