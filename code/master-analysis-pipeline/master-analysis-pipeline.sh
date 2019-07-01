@@ -15,7 +15,7 @@ bsub -M6000 -q normal -J process.HWES -o farmOut/process.HWES.%J.stdout -e farmO
 bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOut/process.WGS.%J.stderr -R"select[mem>10000] rusage[mem=10000] span[hosts=1]" -n4 ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/wgs.396.ft.txt.gz Data/mut-files wgs 0
 
 ## 3. Make the source R data structs
-./code/masterAnalysis/masterAnalysis-v5/makeAllDataStructs.sh
+./code/preprocess-mutation-calls/makeAllDataStructs.sh
 
 ## 3.1 Add the shared / line specific field R data structures
 ./code/masterAnalysis/masterAnalysis-v5/setUpStructuresForSharingAnalysis-v2.sh

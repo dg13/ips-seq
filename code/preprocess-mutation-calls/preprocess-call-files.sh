@@ -110,7 +110,7 @@ fi
 
 ## 6. Collapse dinucs
 DINUCDIR=$MSTROUTDIR/collapseDinucs
-if [ $STEP -le 4 ]
+if [ $STEP -le 5 ]
 then
     checkDirExists $BCSFDIR
     mkdirIfDoesntExist $DINUCDIR

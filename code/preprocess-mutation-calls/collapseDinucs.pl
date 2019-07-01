@@ -47,7 +47,7 @@ while(<IN>) {
 	    push(@l1,@l);
 	}
     } else {
-	## print;
+	print;
     }
 }
 close(IN) unless $inFile eq 'stdin'; ## Avoids perl warning if we try and close STDIN;
