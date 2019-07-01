@@ -1,9 +1,8 @@
-#!/bin/sh -e
-
 ## Attempt to collect all the relevant analyses for the first draft of the paper into a single pipeline
-## This script should unpack everything and requires two things
+## This script should unpack everything and requires:
 ## 1. A raw mutation call directory (with results of Fisher Tests, and bcfs) located in Data/mut-files/raw
 ## 2. FDR threshold files (one per data set, but each using the same thresholds) located in Data/mut-files/fdr-thresholds
+## 3. A CNV location file: Data/cnv/atab_20161018.tsv
 
 ## 1. Create dataset specific threshold files - these are now the same, but there's a separate file for historical reasons
 ln -s fdrThresholds.txt Data/mut-files/fdr-thresholds/fdr-wes.txt
