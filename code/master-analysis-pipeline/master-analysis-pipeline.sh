@@ -17,6 +17,8 @@ bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOu
 ## 3. Make the source R data structs
 ./code/preprocess-mutation-calls/make-all-data-structs.sh
 
+## 4. Make figure 1 panels
+
 ## 3.1 Add the shared / line specific field R data structures
 ./code/masterAnalysis/masterAnalysis-v5/setUpStructuresForSharingAnalysis-v2.sh
 ./code/masterAnalysis/masterAnalysis-v5/submitFindSharingJobs-v2.sh
