@@ -20,7 +20,7 @@ bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOu
 ## 4. Make figure 1 panels
 
 
-##
+## 5. Add triplet sequence context
 
 ## 3.1 Add the shared / line specific field R data structures
 ./code/masterAnalysis/masterAnalysis-v5/setUpStructuresForSharingAnalysis-v2.sh
