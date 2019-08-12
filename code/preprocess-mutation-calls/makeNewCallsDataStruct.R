@@ -27,18 +27,19 @@ markSitesInCnvs <- function(dat) {
     dat
 }
 
-doCnvOverlap <- function(line,dat,cn) {
+doCnvOverlap <- function(line,dat,cn,bedtoolsPath="/software/team170/bedtools2/bin/bedtools") {
     message("Checking CNV overlap for ",line)
+    tempdir(check=TRUE)
     bedFile1 <- tempfile()
     bedFile2 <- tempfile()
     bedFile3 <- tempfile()
     out <- dat[dat$ips==line,c("chr","pos","pos")]
     write.table(out,file=bedFile1,row=F,col=F,qu=F,sep="\t")
     write.table(cn[which(cn$line==convertToFriendly(line)),c("chr","start","end")],file=bedFile2,sep="\t",row=F,col=F,qu=F)
-    cmd <- paste("sort -k 1,1n -k 2,2n",bedFile2,"| bedtools merge -i stdin >",bedFile3)
+    cmd <- paste("sort -k 1,1n -k 2,2n",bedFile2,"| ",bedtoolsPath," merge -i stdin >",bedFile3)
     ## message(cmd)
     system(cmd)
-    cmd <- paste("bedtools intersect -a ",bedFile1,"-b",bedFile3)
+    cmd <- paste(bedtoolsPath,"intersect -a ",bedFile1,"-b",bedFile3)
     ## message(cmd)
     r <- system(cmd,intern=TRUE)
     ret <- ""
@@ -50,13 +51,13 @@ doCnvOverlap <- function(line,dat,cn) {
     ret
 }
 
-markSitesInCnvs2 <- function(dat) {
+markSitesInCnvs2 <- function(dat,bedtoolsPath="/software/team170/bedtools2/bin/bedtools") {
     message("Reading CNV location file ",cnvFile)
     cn <- read.table(cnvFile,sep="\t",he=T,strings=F)
     cn <- cn[cn$chr!="X" & cn$chr!="Y",]
     lines <- unique(dat$ips)
     lines <- lines[convertToFriendly(lines)%in%cn$line]
-    rownumbers <- sapply(lines,doCnvOverlap,dat=dat,cn=cn)
+    rownumbers <- sapply(lines,doCnvOverlap,dat=dat,cn=cn,bedtoolsPath=bedtoolsPath)
     rownumbers <- na.omit(as.numeric(unique(unlist(rownumbers))))
     dat$inCnv <- FALSE
     dat[unique(unlist(rownumbers)),"inCnv"] <- TRUE
@@ -112,7 +113,7 @@ message("Removing ",sum(grepl(",",x$alt))," sites with multiple ALT alleles")
 x <- x[grep(",",x$alt,invert=TRUE),]
 x <- addAlleleFrequencies(dat=x)
 x$ndon <- markSegSites2(dat=x,f=inFile)
-x <- markSitesInCnvs2(dat=x)
+x <- markSitesInCnvs2(dat=x,bedtoolsPath="/software/team170/bedtools2/bin/bedtools")
 # x <- addExacUk1kgAf(dat=x)
 message("Removing ",sum(x$exFreq > popAfThresh | x$ukFreq > popAfThresh)," sites with AF > ",popAfThresh," in ExAC or UK1KG")
 x <- x[x$exFreq < popAfThresh & x$ukFreq < popAfThresh,]

@@ -1,5 +1,3 @@
-## Functions to create a matrix of variant annotationsn from VEP or CSQ (bcftools) fields
-
 removeDinucSecondBase <- function(dat) {
     xd <- dat[dat$dinuc,]
     xd <- xd[seq(1,nrow(xd),2),]
@@ -357,16 +355,94 @@ checkDinucOrdering <- function(dat) {
 }
 
 
+callAdjacentMuts <- function(dat) {
+    ## Function to subset data frame to only adjacent mutations
+    ind <- which(diff(dat[,2])==1)
+    ind <- sort(c(ind,ind+1))
+    message("Found ",length(ind)," adjacent mutations")
+    dat[ind,]
+}
 
-## addShared2 <- function(mut,minCounts=0) {
-##     n1 <- mut$falt + mut$fref
-##     n2 <- mut$ialt + mut$iref
-##     mut1 <- mut[n1 & n2 > minCounts,]
-##     dat <- split(mut1,mut1$fib)
-##     n <- unlist(lapply(dat,function(l) { length(unique(l$ips)) }))
-##     dat <- dat[which(n==2)]
-##     shar <- lapply(dat,getShared)
-##     dat <- do.call(rbind,dat)
-##     dat$shar <- unlist(shar)
-##     dat
-## }
+callNonAdjacentMuts <- function(dat) {
+    ## Function to subset data frame to only adjacent mutations
+    ind <- which(diff(dat[,2])==1)
+    ind <- sort(c(ind,ind+1))
+    ind <- which(!(1:nrow(dat)%in%ind))
+    message("Found ",length(ind)," non-adjacent mutations")
+    dat[ind,]
+}
+
+filterMutTable <- function(dat) {
+    message("Found ",length(table(dat$fib))," donors")
+    message("Found ",length(table(dat$ips))," lines")
+    message("Removing ",sum(dat$chr==23)," X chromosome mutations")
+    dat <- dat[dat$chr<23,] ## Remove X chromosome
+    message("Removing ",sum(dat$dinuc)/2," dinucleotide mutations")
+    dat <- dat[!dat$dinuc,]
+    i <- grepl(",",d$alt)
+    message("Removing ",sum(i)," multi-allelics")
+    dat <- dat[!i,]
+    tab <- table(dat$ips)
+    message("Removing ",sum(tab<minMuts)," donors with < ",minMuts," mutations")
+    nam <- names(tab[tab>minMuts])
+    dat <- dat[dat$ips%in%nam,]
+    message("Retaining ",length(table(dat$fib))," donors")
+    message("Retaining ",length(table(dat$ips))," lines")
+    dat
+}
+
+appendMutationContext <- function(dat,fasta,format="cosmic",ignoreMissing=FALSE) {
+    s <- paste(">",dat$chr,":",dat$pos,"-",dat$pos,sep="")
+    if(sum(!(s%in%fasta[,1]))>0) {
+        if(!ignoreMissing)
+            stop("Error - sequence(s): \n",paste(s[which(!(s%in%fasta[,1]))],collapse="\n"),"\nnot found in ",faFile)
+        else {
+            message("**Warning**\nIgnoring ",sum(!(s%in%fasta[,1]))," records missing from ",faFile)
+            toKeep <- s%in%fasta[,1]
+            s <- s[toKeep]
+            dat <- dat[toKeep,]
+        }
+    }
+    fasta <- fasta[match(s,fasta[,1]),]
+    dat <- data.frame(dat,trinuc=fasta[,2],stringsAsFactors=FALSE)
+    dat <- data.frame(dat,pat="[N>N]",stringsAsFactors=FALSE)
+    m <- t(matrix(unlist(strsplit(dat$trinuc,"")),nrow=3))
+    if(sum(m[,2]!=dat$ref)>0)
+        stop("Error in ref base assignment")
+    m <- makeRevCompMat(m)
+    dat[(dat$ref=="C" & dat$alt=="A")|(dat$ref=="G" & dat$alt=="T"),"pat"] <- "[C>A]"
+    dat[(dat$ref=="C" & dat$alt=="G")|(dat$ref=="G" & dat$alt=="C"),"pat"] <- "[C>G]"
+    dat[(dat$ref=="C" & dat$alt=="T")|(dat$ref=="G" & dat$alt=="A"),"pat"] <- "[C>T]"
+    dat[(dat$ref=="T" & dat$alt=="A")|(dat$ref=="A" & dat$alt=="T"),"pat"] <- "[T>A]"
+    dat[(dat$ref=="T" & dat$alt=="C")|(dat$ref=="A" & dat$alt=="G"),"pat"] <- "[T>C]"
+    dat[(dat$ref=="T" & dat$alt=="G")|(dat$ref=="A" & dat$alt=="C"),"pat"] <- "[T>G]"
+    if(sum(dat$pat=="[N>N]")>0) {
+        print(tab[tab$pat=="[N>N]",])
+        stop("Error - some mutations (multi-allelic, N, ?) not ATGC->ATGC")
+    }
+    data.frame(dat,trinucPat=paste(m[,1],dat$pat,m[,3],sep=""),stringsAsFactors=FALSE)
+}
+
+makeRevCompMat <- function(mat) {
+    if(sum(grepl("[^ATGC]",mat)>0))
+       stop("Error - non ATGC bases found")
+    t(apply(mat,1,revCompRow))
+}
+
+revCompRow <- function(r) {
+    ret <- NA
+    if(r[2]!="C" & r[2]!="T") {
+        ret <- rev(unlist(lapply(r,revComp)))
+    } else {
+          ret <- r
+      }
+    ret
+}
+
+revComp <- function(base) {
+    if(base=="A") { ret <- "T" }
+    if(base=="C") { ret <- "G" }
+    if(base=="G") { ret <- "C" }
+    if(base=="T") { ret <- "A" }
+    ret
+}

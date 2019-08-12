@@ -14,13 +14,49 @@ bsub -M6000 -q normal -J process.WES -o farmOut/process.WES.%J.stdout -e farmOut
 bsub -M6000 -q normal -J process.HWES -o farmOut/process.HWES.%J.stdout -e farmOut/process.HWES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/high-vs-low-exomes.ft.txt.gz Data/mut-files hwes 0
 bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOut/process.WGS.%J.stderr -R"select[mem>10000] rusage[mem=10000] span[hosts=1]" -n4 ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/wgs.396.ft.txt.gz Data/mut-files wgs 0
 
-## 3. Make the source R data structs
+## 3. Make the source R data structs - most downstream analysis will use these files
+cp /lustre/scratch117/cellgen/team170/gk14/exp_array/define_genos/all_cns_no_uimo_2.txt Data/cnv/cnv-call-src.txt
+printf "chr\tstart\tend\tcn\tline\n" > Data/cnv/cnv-calls-12082019.txt
+awk -vOFS="\t" '{ gsub("HPSI.*-","",$1); print $3,$4,$5,$6,$1 }'  Data/cnv/cnv-call-src.txt >> Data/cnv/cnv-calls-12082019.txt
 ./code/preprocess-mutation-calls/make-all-data-structs.sh
+
+## 4. Add information on mutation sharing between lines
+./code/mutShar/setUpStructuresForSharingAnalysis.sh
+./code/mutShar/submitFindSharingJobs.sh
+./code/mutShar/concatenateAndAddSharInfoToRds.sh
+
+## 5. Analysis: enrichment of deleterious mutations relative to germline
+
+## 5.1 Extract all variable sites from source bcfs
+BCFTOOLS=$HOME/local/src/bcftools-git/bcftools/bcftools
+SRCDIR=Data/mut-files/raw/
+BCF=$SRCDIR/exomes.bcf
+$BCFTOOLS query -f '%CHROM\t%POS\t%AF_1KG\t%AF_EXAC\t%CSQ\t%BCSQ\n' $BCF | ./code/fitnessImpact/parseCsq.pl stdin | gzip > Data/fitnessImpact/all-variants/wes.all.sift-pphen.txt.gz
+BCF=$SRCDIR/wgs.396.bcf
+$BCFTOOLS query -f '%CHROM\t%POS\t%AF_1KG\t%AF_EXAC\t%CSQ\t%BCSQ\n' $BCF | ./code/fitnessImpact/parseCsq.pl stdin | awk '$5!="NA" || $7!="NA"' | gzip > Data/fitnessImpact/all-variants/wgs.all.sift-pphen.txt.gz
+BCF=$SRCDIR/high-vs-low-exomes.bcf
+$BCFTOOLS query -f '%CHROM\t%POS\t%AF_1KG\t%AF_EXAC\t%CSQ\t%BCSQ\n' $BCF | ./code/fitnessImpact/parseCsq.pl stdin | gzip > Data/fitnessImpact/all-variants/hwes.all.sift-pphen.txt.gz
+
+## 4.2 Extract candidate germline sites based on EXAC and UK10K / 1KG mafs
+mkdir -p Data/fitnessImpact/germline
+gunzip -c Data/fitnessImpact/all-variants/wes.all.sift-pphen.txt.gz | ./code/fitnessImpact/filterGermline.pl stdin --maf=0.01 | gzip > Data/fitnessImpact/germline/wes.all.sift-pphen-germline.txt.gz
+gunzip -c Data/fitnessImpact/all-variants/wgs.all.sift-pphen.txt.gz | ./code/fitnessImpact/filterGermline.pl stdin --maf=0.01 | gzip > Data/fitnessImpact/germline/wgs.all.sift-pphen-germline.txt.gz
+gunzip -c Data/fitnessImpact/all-variants/hwes.all.sift-pphen.txt.gz | ./code/fitnessImpact/filterGermline.pl stdin --maf=0.01 | gzip > Data/fitnessImpact/germline/hwes.all.sift-pphen-germline.txt.gz
 
 ## 4. Make figure 1 panels
 
 
-## 5. Add triplet sequence context
+## 5. Add triplet sequence context to the RDAs
+Rscript code/preprocess-mutation-calls/getCoordsOfPointMuts.R Data/mut-files/rdas/mut-wes-fdr5.bcsqFilter.rda Data/mut-files/triplet-seq-context/coords-wes.bed
+Rscript code/preprocess-mutation-calls/getCoordsOfPointMuts.R Data/mut-files/rdas/mut-wgs-fdr5.bcsqFilter.rda Data/mut-files/triplet-seq-context/coords-wgs.bed
+Rscript code/preprocess-mutation-calls/getCoordsOfPointMuts.R Data/mut-files/rdas/mut-hwes-fdr5.bcsqFilter.rda Data/mut-files/triplet-seq-context/coords-hwes.bed
+bsub -M1000 -R"select[mem>1000] rusage[mem=1000]" -q normal -J wgs-context -o farmOut/seqcontext-wgs.%J.stdout -e farmOut/seqcontext-wgs.%J.stderr "twoBitToFa -noMask ~/local/ucsc/hg19/hg19.2bit -bed=Data/mut-files/triplet-seq-context/coords-wgs.bed Data/mut-files/triplet-seq-context/seqContext-wgs.fa"
+bsub -M1000 -R"select[mem>1000] rusage[mem=1000]" -q normal -J wes-context -o farmOut/seqcontext-wes.%J.stdout -e farmOut/seqcontext-wes.%J.stderr "twoBitToFa -noMask ~/local/ucsc/hg19/hg19.2bit -bed=Data/mut-files/triplet-seq-context/coords-wes.bed Data/mut-files/triplet-seq-context/seqContext-wes.fa"
+bsub -M1000 -R"select[mem>1000] rusage[mem=1000]" -q normal -J hwes-context -o farmOut/seqcontext-hwes.%J.stdout -e farmOut/seqcontext-hwes.%J.stderr "twoBitToFa -noMask ~/local/ucsc/hg19/hg19.2bit -bed=Data/mut-files/triplet-seq-context/coords-hwes.bed Data/mut-files/triplet-seq-context/seqContext-hwes.fa"
+gzip -f Data/triplet-seq-context/seqContext-wgs.fa
+gzip -f Data/triplet-seq-context/seqContext-wes.fa
+gzip -f Data/triplet-seq-context/seqContext-hwes.fa
+./code/preprocess-mutation-calls/appendMutContext-v2.sh
 
 ## 3.1 Add the shared / line specific field R data structures
 ./code/masterAnalysis/masterAnalysis-v5/setUpStructuresForSharingAnalysis-v2.sh
