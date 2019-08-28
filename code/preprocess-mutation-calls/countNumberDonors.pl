@@ -26,7 +26,6 @@ my %count;
 while(<IN>) {
     next if /^#/;
     my @l = split;
-
     $count{$l[0]}{$l[1]}{$l[2]}++;
 }
 close(IN) unless $inFile eq 'stdin'; ## Avoids perl warning if we try and close STDIN;
