@@ -21,12 +21,12 @@ checkFileExists $INFILE
 mkdirIfDoesntExist $OUTDIR
 
 ## Execute
-message "$0: Creating FDR1 set"
-message "$0: ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 1 | gzip > $OUTDIR/${STEM}-fdr1.txt.gz"
-./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 1 | gzip > $OUTDIR/${STEM}-fdr1.txt.gz
+# message "$0: Creating FDR1 set"
+# message "$0: ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 1 | gzip > $OUTDIR/${STEM}-fdr1.txt.gz"
+# ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 1 | gzip > $OUTDIR/${STEM}-fdr1.txt.gz
 message "$0: Creating FDR5 set"
 message "$0: ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 5 | gzip > $OUTDIR/${STEM}-fdr5.txt.gz"
 ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 5 | gzip > $OUTDIR/${STEM}-fdr5.txt.gz
-message "$0: Creating FDR10 set"
-message "$0: ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 10 | gzip > $OUTDIR/${STEM}-fdr10.txt.gz"
-./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 10 | gzip > $OUTDIR/${STEM}-fdr10.txt.gz
+# message "$0: Creating FDR10 set"
+# message "$0: ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 10 | gzip > $OUTDIR/${STEM}-fdr10.txt.gz"
+# ./code/preprocess-mutation-calls/makeFdrCallset.pl $INFILE $FDR --fdr 10 | gzip > $OUTDIR/${STEM}-fdr10.txt.gz

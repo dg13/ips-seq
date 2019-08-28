@@ -31,7 +31,6 @@ while(<IN>) {
 close(IN) unless $inFile eq 'stdin'; ## Avoids perl warning if we try and close STDIN;
 
 ## Functions
-
 sub processBcsqField {
     my $csq = shift;
     if($csq =~ /,/) {

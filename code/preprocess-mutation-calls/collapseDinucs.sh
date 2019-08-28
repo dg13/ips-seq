@@ -20,12 +20,12 @@ mkdirIfDoesntExist $OUTDIR
 export PERL5LIB=$PERL5LIB:`pwd`/code
 
 ## Execute
-message "$0: Filtering FDR1 set -> ${OUTDIR}/${STEM}-fdr1.txt.gz"
-message "$0: ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr1.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr1.txt.gz"
-./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr1.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr1.txt.gz
+# message "$0: Filtering FDR1 set -> ${OUTDIR}/${STEM}-fdr1.txt.gz"
+# message "$0: ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr1.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr1.txt.gz"
+# ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr1.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr1.txt.gz
 message "$0: Filtering FDR5 set -> ${OUTDIR}/${STEM}-fdr5.txt.gz"
 message "$0: ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr5.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr5.txt.gz"
 ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr5.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr5.txt.gz
-message "$0: Filtering FDR10 set -> ${OUTDIR}/${STEM}-fdr10.txt.gz"
-message "$0: ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr10.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr10.txt.gz"
-./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr10.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr10.txt.gz
+# message "$0: Filtering FDR10 set -> ${OUTDIR}/${STEM}-fdr10.txt.gz"
+# message "$0: ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr10.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr10.txt.gz"
+# ./code/preprocess-mutation-calls/collapseDinucs.pl ${INDIR}/${STEM}-fdr10.txt.gz | gzip > ${OUTDIR}/${STEM}-fdr10.txt.gz

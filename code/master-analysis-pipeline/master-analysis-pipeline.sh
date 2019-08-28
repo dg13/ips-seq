@@ -4,17 +4,30 @@
 ## 2. FDR threshold files (one per data set, but each using the same thresholds) located in Data/mut-files/fdr-thresholds
 ## 3. A CNV location file: Data/cnv/atab_20161018.tsv
 
+## 0. Set up
+git clone https://github.com/dg13/ips-seq.git
+cd ips-seq
+mkdir -p Data/mut-files/raw
+mkdir -p farmOut/
+rsync -av /lustre/scratch116/vr/user/pd3/hipsci/exome-point-mutations/releases/exomes.SNVs.637bams.2019-07-19.txt.gz Data/mut-files/raw/ 
+rsync -av /lustre/scratch116/vr/user/pd3/hipsci/exome-point-mutations/releases/wgs.SNVs.530bams.2019-08-12.txt.gz Data/mut-files/raw/
+rsync -av /lustre/scratch116/vr/user/pd3/hipsci/exome-point-mutations/releases/exomes.indels.mpileup.637bams.2019-07-19.txt.gz Data/mut-files/raw/
+rsync -av /lustre/scratch116/vr/user/pd3/hipsci/exome-point-mutations/unified-set/final-set-2018-02-05.all/high-vs-low-exomes.ft.txt.gz Data/mut-files/raw/
+
 ## 1. Create dataset specific threshold files - these are now the same, but there's a separate file for historical reasons
-ln -s fdrThresholds.txt Data/mut-files/fdr-thresholds/fdr-wes.txt
-ln -s fdrThresholds.txt Data/mut-files/fdr-thresholds/fdr-hwes.txt
-ln -s fdrThresholds.txt Data/mut-files/fdr-thresholds/fdr-wgs.txt
+mkdir -p Data/mut-files/fdr-thresholds
+printf "5\t2.029032e-03\n" > Data/mut-files/fdr-thresholds/fdr-wes.txt
+printf "5\t4.974399e-04\n" > Data/mut-files/fdr-thresholds/fdr-wgs.txt
+printf "5\t9.935786e-04\n" > Data/mut-files/fdr-thresholds/fdr-hwes.txt
 
 ## 2. Preprocess call files
-bsub -M6000 -q normal -J process.WES -o farmOut/process.WES.%J.stdout -e farmOut/process.WES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/exomes.ft.txt.gz Data/mut-files wes 0
+mkdir -p farmOut/
+bsub -M6000 -q normal -J process.WES -o farmOut/process.WES.%J.stdout -e farmOut/process.WES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/exomes.SNVs.637bams.2019-07-19.txt.gz Data/mut-files wes 0
 bsub -M6000 -q normal -J process.HWES -o farmOut/process.HWES.%J.stdout -e farmOut/process.HWES.%J.stderr -R"select[mem>6000] rusage[mem=6000]" ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/high-vs-low-exomes.ft.txt.gz Data/mut-files hwes 0
-bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOut/process.WGS.%J.stderr -R"select[mem>10000] rusage[mem=10000] span[hosts=1]" -n4 ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/wgs.396.ft.txt.gz Data/mut-files wgs 0
+bsub -M10000 -q normal -J process.WGS -o farmOut/process.WGS.%J.stdout -e farmOut/process.WGS.%J.stderr -R"select[mem>10000] rusage[mem=10000] span[hosts=1]" -n4 ./code/preprocess-mutation-calls/preprocess-call-files.sh Data/mut-files/raw/wgs.SNVs.530bams.2019-08-12.txt.gz Data/mut-files wgs 0
 
 ## 3. Make the source R data structs - most downstream analysis will use these files
+mkdir -p Data/cnv/
 cp /lustre/scratch117/cellgen/team170/gk14/exp_array/define_genos/all_cns_no_uimo_2.txt Data/cnv/cnv-call-src.txt
 printf "chr\tstart\tend\tcn\tline\n" > Data/cnv/cnv-calls-12082019.txt
 awk -vOFS="\t" '{ gsub("HPSI.*-","",$1); print $3,$4,$5,$6,$1 }'  Data/cnv/cnv-call-src.txt >> Data/cnv/cnv-calls-12082019.txt
