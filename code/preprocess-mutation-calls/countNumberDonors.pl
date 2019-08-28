@@ -24,6 +24,7 @@ my $inFile = $ARGV[0];
 my %count;
 *IN = &open_for_read2($inFile);
 while(<IN>) {
+
     next if /^#/;
     my @l = split;
     $count{$l[0]}{$l[1]}{$l[2]}++;
