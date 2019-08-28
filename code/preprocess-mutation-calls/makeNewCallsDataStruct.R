@@ -106,7 +106,7 @@ unfilteredOutFile <- gsub(".rd[as]$",".unfiltered.rda",outFile)
 ## Start processing
 popAfThresh <- 0.001
 afThresh <- 0.7
-x <- readRawMutFileV4(inFile)
+x <- readRawMutFileV5(inFile)
 message("Removing ",sum(x$chr>22)," sex chromosome sites")
 x <- x[x$chr<23,]
 message("Removing ",sum(grepl(",",x$alt))," sites with multiple ALT alleles")

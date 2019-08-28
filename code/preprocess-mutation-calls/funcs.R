@@ -34,6 +34,28 @@ readRawMutFileV4 <- function(f) {
     ret
 }
 
+readRawMutFileV5 <- function(f) {
+    colNames <- c("chr","pos","fib","ips","pval","ref","alt","fref","falt","iref","ialt","ukFreq","exFreq","clinsig","sift","pphen","hgnc","ensGene","csq","vep","filter")
+    ## colNames <- c("chr","pos","fib","ips","pval","ref","alt","fref","falt","iref","ialt","ukFreq","exFreq","clinsig","sift","pphen","hgnc","ensGene","csq","dinuc")
+    message("Reading raw mutation calls from ",f)
+    ret <- read.table(f,sep="\t",stringsAsFactors=FALSE,col.names=colNames)
+    ## ret$dinuc <- as.logical(ret$dinuc-1)
+    if(sum(ret$chr=="X" | ret$chr=="Y")>0) {
+        message("Setting X and Y to 23, 24")
+        ret[ret$chr=="X","chr"] <- 23
+        ret[ret$chr=="Y","chr"] <- 24
+    }
+    ret$chr <- as.numeric(as.character(ret$chr))
+    ret[grep(",",ret$ukFreq),"ukFreq"] <- as.character(unlist(lapply(d <- strsplit(ret[grep(",",ret$ukFreq),"ukFreq"],","),function(l) { sort(as.numeric(l[l!="."]))[1] })))
+    ret[grep(",",ret$exFreq),"exFreq"] <- as.character(unlist(lapply(d <- strsplit(ret[grep(",",ret$exFreq),"exFreq"],","),function(l) { sort(as.numeric(l[l!="."]))[1] })))
+    ret[ret$exFreq==".","exFreq"] <- 0
+    ret[ret$ukFreq==".","ukFreq"] <- 0
+    ret$exFreq <- as.numeric(ret$exFreq)
+    ret$ukFreq <- as.numeric(ret$ukFreq)    
+    ret <- ret[order(ret$chr),]
+    ret
+}
+
 readRawMutFileV2 <- function(f,fill=FALSE) {
     rawColNames1 <- c("ft","ips","fib","chr","pos","iref","ialt","fref","falt","pval","ref","alt","csq","info","exac","uk1kg","dinuc")
     rawColNames2 <- c("ft","ips","fib","chr","pos","iref","ialt","fref","falt","pval","ref","alt","csq","exac","uk1kg","dinuc")
