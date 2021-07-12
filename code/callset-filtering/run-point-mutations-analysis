@@ -1,0 +1,459 @@
+#!/usr/bin/env perl
+#
+# Author: petr.danecek@sanger
+#
+
+use strict;
+use warnings;
+use Carp;
+
+my $runner = myRunner->new();
+$runner->run();
+
+exit;
+
+#--------------------------------
+
+package myRunner;
+use base qw(Runner);
+use strict;
+use warnings;
+
+sub new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+
+    $$self{verbose} = 1;
+
+    $$self{ann_1kgp}    = '1000GP_Phase3.sites.vcf.gz';
+    $$self{ann_exac}    = 'ExAC.r0.3.1.sites.vep.vcf.gz';
+    $$self{ann_clinvar} = 'clinvar_20170228.vcf.gz';
+    $$self{ref}   = 'hs37d5.fa';
+    $$self{gff}   = 'Homo_sapiens.GRCh37.82.gff3.gz';
+    $$self{bt}    = 'bcftools';
+    $$self{pairs} = 'pairs.txt';
+
+    $$self{_sampleconf} = q[
+        
+            ann_1kgp    => ']. $$self{ann_1kgp} .q[',
+            ann_exac    => ']. $$self{ann_exac} .q[',
+            ann_clinvar => ']. $$self{ann_clinvar} .q[',
+
+            # for bt/csq
+            ref => ']. $$self{ref} .q[',
+            gff => ']. $$self{gff} .q[',
+
+            # for bt/ad-bias
+            pairs => ']. $$self{pairs} .q[',
+
+            bt  => ']. $$self{bt} .q[',
+
+    ]."\n";
+
+    $$self{usage} .= 
+        "About: Run HipSci point-mutation analysis. On input takes a directory with\n" .
+        "       BCFs with FMT/AD annotation and VEP sift/polyphen annotations (see\n" .
+        "       run.chunkify-vep.human.conf)\n" .
+        "       Then annotates with 1kGP and ExAC allele frequencies, clinvar, bt/csq\n" .
+        "       and creates a tab-delimited bt/ad-bias file\n" .
+        "Usage: run-adbias\n" .
+        "Options:\n" .
+        "   -i, --indir <dir>       Input directory\n" .
+        "   -o, --outdir <dir>      Output directory\n" .
+        "\n";
+
+    return $self;
+}
+
+sub parse_args
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-i' or $arg eq '--indir' ) { $$self{indir}=shift(@ARGV); next; }
+        if ( $arg eq '-o' or $arg eq '--outdir' ) { $$self{outdir}=shift(@ARGV); next; }
+        $self->throw();
+    }
+    if ( !exists($$self{indir}) ) { $self->throw("Expected the -i option."); }
+    if ( !exists($$self{outdir}) ) { $self->throw("Expected the -o option."); }
+}
+
+sub main
+{
+    my ($self) = @_;
+    $self->parse_args();
+
+    # Returns list of hashes with keys
+    #   - fname .. full path
+    #   - bname .. base name w/o suffix (input files are in the same dir, so bname is unique)
+    my $files = $self->list_files($$self{indir});
+
+    # Add 1kGP and ExAC AFs, CLNSIG, bt/CSQ
+    # Add the new file name to the hash, so now it is
+    #   - fname .. full path
+    #   - bname .. base name w/o suffix (input files are in the same dir, so bname is unique)
+    #   - aname .. name of the annotated file
+    for my $file (@$files)
+    {
+        $$file{aname} = "$$self{outdir}/$$file{bname}.annot.bcf";
+        $self->spawn('annotate',$$file{aname},$file);
+    }
+    $self->wait;
+
+    # Sanity check sample names in the VCF and pairing - is it known for all samples?
+    for my $file (@$files)
+    {
+        $self->check_sample_names($$file{aname},$$self{pairs}); 
+    }
+
+    # Run bt/ad-bias to get the FT, excluding AF>=0.5, and extract the following fields:
+    #   - chrom
+    #   - pos
+    #   - fibro
+    #   - ips
+    #   - Fisher test p-value
+    #   - REF
+    #   - ALT
+    #   - fibro: nREF
+    #   - fibro: nALT
+    #   - ips:   nREF
+    #   - ips:   nALT
+    #   - AF in 1000GP
+    #   - AF in ExAC
+    #   - clinsing
+    #   - SIFT:     P(deleterious) 
+    #   - PolyPhen: P(deleterious)
+    #   - gene name
+    #   - ENSID
+    #   - bcftools/csq
+    #
+    # Add the new file name to the hash, so now it is
+    #   - fname .. full path
+    #   - bname .. base name w/o suffix (input files are in the same dir, so bname is unique)
+    #   - aname .. name of the annotated file
+    #   - tname .. name of the FT file
+    for my $file (@$files)
+    {
+        $$file{tname} = "$$self{outdir}/$$file{bname}.ft.txt.gz";
+        $self->spawn('ad_bias',$$file{tname},$file);
+    }
+    $self->wait;
+
+    $self->spawn('compute_thresholds',"$$self{outdir}/thresholds.txt",$files);
+    $self->wait;
+
+    # Unused:
+    #   # Create a list of positions. From duplicate positions choose one with the minimum FT.
+    #   $self->spawn('unique_list',"$$self{outdir}/sites.txt.gz",$files);
+    #   $self->wait;
+
+    $self->all_done;
+}
+
+sub list_files
+{
+    my ($self,$dir) = @_;
+    my @files = ();
+    opendir(my $dh,$dir) or $self->throw("$dir: $!");
+    while ( my $file = readdir($dh) )
+    {
+        if ( !($file=~/\.bcf$/) && !($file=~/\.vcf\.gz$/) ) { next; }
+        push @files, { fname=>"$dir/$file", bname=>$` };
+    }
+    closedir($dh) or $self->throw("close failed: $dir");
+    return \@files;
+}
+
+sub check_sample_names
+{
+    my ($self,$fname,$pairs) = @_;
+    my %ips2fibro = ();
+    my %fibro = ();
+    for my $line (grep { chomp } $self->cmd("cat $pairs"))
+    {
+        my ($ips,$fibro) = split(/\s+/,$line);
+        $fibro{$fibro} = 1;
+        $ips2fibro{$ips} = $fibro;
+    }
+    my @smpl  = grep { chomp } $self->cmd("$$self{bt} query -l $fname");
+    for my $smpl (@smpl)
+    {
+        if ( !exists($fibro{$smpl}) && !exists($ips2fibro{$smpl}) ) { $self->warn("Unknown sample:\t$smpl\n"); }
+    }
+}
+
+sub index_part
+{
+    my ($self,$vcf) = @_;
+    $self->cmd("$$self{bt} index $vcf.part");
+    if ( -e "$vcf.part.tbi" )
+    {
+        rename("$vcf.part.tbi","$vcf.tbi");
+        rename("$vcf.part",$vcf);
+    }
+    else
+    {
+        rename("$vcf.part.csi","$vcf.csi");
+        rename("$vcf.part",$vcf);
+    }
+}
+
+sub annotate
+{
+    my ($self,$outfile,$file) = @_; 
+
+    my $fname = $$file{fname};
+    my $bname = $$file{bname};
+    my $dir = $$self{outdir};
+
+    my @rmme = ();
+
+    my $in  = $fname;
+    my $out = "$dir/$bname.ann_1kgp.bcf";
+    if ( ! -e $out )
+    {
+        $self->cmd("$$self{bt} annotate -a $$self{ann_1kgp} -c 'AF_1KG:=AF' $in -Ob -o $out.part");
+        $self->index_part($out);
+    }
+    push @rmme, $out, "$out.csi";
+
+    $in  = $out;
+    $out = "$dir/$bname.ann_exac.bcf";
+    if ( ! -e $out )
+    {
+        $self->cmd("$$self{bt} annotate -a $$self{ann_exac} -c 'AF_EXAC:=AF' $in -Ob -o $out.part");
+        $self->index_part($out);
+    }
+    push @rmme, $out, "$out.csi";
+
+    $in  = $out;
+    $out = "$dir/$bname.ann_clinvar.bcf";
+    if ( ! -e $out )
+    {
+        $self->cmd("$$self{bt} annotate -a $$self{ann_clinvar} -c CLNSIG $in -Ob -o $out.part");
+        $self->index_part($out);
+    }
+    push @rmme, $out, "$out.csi";
+
+    $in  = $out;
+    $out = $outfile;
+    if ( ! -e $out )
+    {
+        $self->cmd("$$self{bt} csq -n 64 -p m -f $$self{ref} -g $$self{gff} $in -Ob -o $out.part");
+        $self->index_part($out);
+    }
+
+    for my $file (@rmme)
+    {
+        unlink($file);
+    }
+}
+
+# Extract SIFT score, POLYPHEN score, gene name, gene ENSID from VEP annotation line:
+#
+#   Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position| \
+#   Protein_position|Amino_acids|Codons|Existing_variation|DISTANCE|STRAND|SYMBOL_SOURCE|HGNC_ID|SIFT|PolyPhen
+#
+# There can be multiple comma-separated consequences
+#
+sub parse_vep__sift_polyphen_gene
+{
+    my ($self,$vep,$fmt) = @_;
+    chomp($vep);
+    my $pdel_sift = 0;
+    my $pdel_poly = 0;
+    my $gene  = '';
+    my $ensid = '';
+    my %cat = ();
+    for my $csq (split(/,/,$vep))
+    {
+        my @vals  = split(/\|/,$csq);
+        my $sift  = $vals[$$fmt{SIFT}];
+        my $poly  = $vals[$$fmt{PolyPhen}];
+
+        # sift: 0 deleterious, 1 tolerated
+        # poly: 0 tolerated, 1 deleterious
+        if ( $sift && $sift=~/\((\d*\.?\d+)\)/ )
+        {
+            my $cat = $`;
+            $sift = 1.0 - $1;
+            if ( $pdel_sift < $sift ) 
+            { 
+                $pdel_sift = $sift; 
+                $gene  = $vals[$$fmt{SYMBOL}];
+                $ensid = $vals[$$fmt{Gene}];
+            }
+            if ( !exists($cat{sift}{$cat}) ) { $cat{sift}{$cat}{min} = $sift; $cat{sift}{$cat}{max} = $sift; }
+            if ( $cat{sift}{$cat}{min} > $sift ) { $cat{sift}{$cat}{min} = $sift; }
+            if ( $cat{sift}{$cat}{max} < $sift ) { $cat{sift}{$cat}{max} = $sift; }
+        }
+        if ( $poly && $poly=~/\((\d*\.?\d+)\)/ )
+        {
+            my $cat = $`;
+            $poly = $1;
+            if ( $pdel_poly < $1 )
+            { 
+                $pdel_poly = $1; 
+                $gene  = $vals[$$fmt{SYMBOL}];
+                $ensid = $vals[$$fmt{Gene}];
+            }
+            if ( !exists($cat{poly}{$cat}) ) { $cat{poly}{$cat}{min} = $poly; $cat{poly}{$cat}{max} = $poly; }
+            if ( $cat{poly}{$cat}{min} > $poly ) { $cat{poly}{$cat}{min} = $poly; }
+            if ( $cat{poly}{$cat}{max} < $poly ) { $cat{poly}{$cat}{max} = $poly; }
+        }
+    }
+    if ( $gene eq '' ) { $gene = '.'; }
+    if ( $ensid eq '' ) { $ensid = '.'; }
+    return (sift=>$pdel_sift, poly=>$pdel_poly, gene=>$gene, ensid=>$ensid);
+}
+
+sub ad_bias
+{
+    my ($self,$outfile,$file) = @_;
+
+    my $i = 0;
+    my %fmt = map { $_ => $i++ } split(/\|/,'Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|DISTANCE|STRAND|SYMBOL_SOURCE|HGNC_ID|SIFT|PolyPhen');
+
+    # Output columns
+    my @cols = 
+    (
+     'chrom',
+     'pos',
+     'fibro',
+     'ips',
+     'Fisher test p-value',
+     'REF',
+     'ALT',
+     'fibro: nREF',
+     'fibro: nALT',
+     'ips:   nREF',
+     'ips:   nALT',
+     'AF in 1000GP',
+     'AF in ExAC',
+     'clinsing',
+     'SIFT:     P(deleterious)',
+     'PolyPhen: P(deleterious)',
+     'gene name',
+     'ENSID',
+     'bcftools/csq'
+    );
+
+#   my $cmd = qq[$$self{bt} +ad-bias -e'AF_EXAC>=0.05 || AF_1KG>=0.05' $$file{aname} -- -d 20 -a 3 -t 1.1 -s $$self{pairs} -f'%REF\t%ALT\t%AF_EXAC\t%AF_1KG\t%CLNSIG\t%BCSQ\t%CSQ'];
+my $cmd = qq[$$self{bt} +ad-bias -e'AF_EXAC>=0.05 || AF_1KG>=0.05' $$file{aname} -- -d 20 -a 3 -t 1.1 -s $$self{pairs} -f'%REF\t%ALT\t%AF_EXAC\t%AF_1KG\t%CLNSIG\t%BCSQ'];
+    open(my $out,"| gzip -c > $outfile.part") or $self->throw("gzip -c > $outfile.part: $!");
+    for (my $i=0; $i<@cols; $i++) 
+    {
+        printf $out "#  [%d] $cols[$i]\n", $i+1;
+    }
+    print $out "#\n";
+    open(my $in,"$cmd |") or $self->throw("$cmd: $!");
+    while (my $line=<$in>)
+    {
+        # FT, Fisher Test   [2]Sample   [3]Control  [4]Chrom    [5]Pos  [6]smpl.nREF    [7]smpl.nALT    [8]ctrl.nREF    [9]ctrl.nALT    [10]P-value
+        #                   [11]REF  [12]ALT  [13]AF_EXAC [14]AF_1KG  [15]CLNSIG  [16]BCSQ  [17]CSQ
+        my @vals = split(/\t/,$line);
+        if ( $vals[0] eq 'SN' )
+        {
+            open(my $fh,'>',"$outfile.sn") or $self->throw("$outfile.sn: $!");
+            print $fh $line;
+            close($fh) or $self->throw("close failed: $outfile.sn");
+            next;
+        }
+        if ( $vals[0] ne 'FT' ) { next; }
+        $vals[11] =~ s/,.*$//;      # print only the first alternate allele, because that's what was used in ad-bias calculation
+#        my %vep = $self->parse_vep__sift_polyphen_gene($vals[16],\%fmt);
+my %vep = ( sift=>'.', poly=>'.', gene=>'.', ensid=>'.' );
+chomp($vals[15]);
+        print $out 
+            join("\t",
+                    $vals[3],$vals[4],$vals[2],$vals[1],$vals[9],$vals[10],$vals[11],$vals[7],$vals[8],$vals[5],$vals[6],$vals[13],$vals[12],
+                    $vals[14],$vep{sift},$vep{poly},$vep{gene},$vep{ensid},$vals[15]
+                )
+            . "\n";
+    }
+    close($in) or $self->throw("close failed: $cmd");
+    close($out) or $self->throw("close failed: $outfile.part");
+    rename("$outfile.part",$outfile) or $self->throw("rename $outfile.part $outfile: $!");
+}
+
+sub unique_list
+{
+    my ($self,$outfile,$files) = @_;
+    my @files = ();
+    for my $file (@$files) { push @files,$$file{tname}; }
+    my $cmd = "zcat ".join(' ',@files)." | grep -v ^# | sort -k1,1d -k2,2n -k5,5g |";
+    open(my $in,$cmd) or $self->throw("$cmd: $!");
+    open(my $out,"| gzip -c > $outfile.part") or $self->throw("$outfile.part: $!");
+    my ($prev_chr,$prev_pos);
+    while (my $line=<$in>)
+    {
+        my ($chr,$pos,@vals) = split(/\t/,$line);
+        if ( defined $prev_chr && $prev_chr eq $chr && $prev_pos eq $pos ) { next; }
+        $prev_chr = $chr;
+        $prev_pos = $pos;
+        print $out $line;
+    }
+    close($out) or $self->throw("close failed: $outfile.part");
+    close($in) or $self->throw("close failed: $cmd");
+    rename("$outfile.part",$outfile) or $self->throw("rename $outfile.part $outfile: $!");
+}
+
+sub compute_thresholds
+{
+    my ($self,$outfile,$files) = @_;
+    my @files = ();
+    my $n  = 0;
+    my $th = 0;
+    for my $file (@$files)
+    {
+        push @files,$$file{tname}; 
+        my @sn = ($self->cmd("cat $$file{tname}.sn"))[0];
+        @sn = split(/\t/,$sn[0]);
+        $n += $sn[3];   # number of comparisons
+        chomp($th = $sn[4]);
+    }
+    my $zcat = "zcat ".join(' ',@files)." | grep -v ^#";
+    chomp(my $pval_01 = ($self->cmd("$zcat | cut -f5 | stats B -t 0.01 -n $n -f $th | grep -v ^# | cut -f4"))[0]);
+    chomp(my $pval_05 = ($self->cmd("$zcat | cut -f5 | stats B -t 0.05 -n $n -f $th | grep -v ^# | cut -f4"))[0]);
+    chomp(my $pval_10 = ($self->cmd("$zcat | cut -f5 | stats B -t 0.10 -n $n -f $th | grep -v ^# | cut -f4"))[0]);
+    open(my $fh,'>',"$outfile.part") or $self->throw("$outfile.part: $!");
+    print $fh "FILES\t".join("\t",@files)."\n";
+    print $fh "NTESTS\t$n\n";
+    print $fh "TH_1%\t$pval_01\n";
+    print $fh "TH_5%\t$pval_05\n";
+    print $fh "TH_10%\t$pval_10\n";
+    close($fh) or $self->throw("close failed: $outfile.part");
+    rename("$outfile.part",$outfile) or $self->throw("rename $outfile.part $outfile: $!");
+}
+
+#   sub run_adbias
+#   {
+#       my ($self,$outfile) = @_;
+#       my $cmd = $$self{ad_bias};
+#       for my $key (qw(VCF PREFILTER PAIRS))
+#       {
+#           $cmd =~ s/{$key}/$$self{$key}/g;
+#       }
+#       $self->cmd("$cmd | bgzip -c > $outfile.part");
+#       rename("$outfile.part",$outfile) or $self->throw("rename $outfile.part $outfile: $!");
+#   }
+#   
+#   sub filter
+#   {
+#       my ($self,$outfile,$infile) = @_;
+#       my @n = $self->cmd("zcat $infile | grep ^SN | cut -f4");
+#       chomp($n[0]);
+#       my @pval = $self->cmd("zcat $infile | grep ^FT | cut -f10 | stats B -f $$self{PREFILTER} -n $n[0] -t $$self{fdr} | grep -v ^# | cut -f3");
+#       chomp($pval[0]);
+#       open(my $fh,'>',"$outfile.info") or $self->throw("$outfile.info: $!");
+#       print $fh "FDR: $$self{fdr}\n";
+#       print $fh "p-value cutoff: $pval[0]\n";
+#       print $fh "nComparisons: $n[0]\n";
+#       close($fh) or $self->throw("close failed: $outfile.info"); 
+#       $self->cmd("zcat $infile | awk '\$10<=$pval[0]' | bgzip -c > $outfile.part");
+#       rename("$outfile.part",$outfile) or $self->throw("rename $outfile.part $outfile: $!");
+#   }
+
+
+

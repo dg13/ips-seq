@@ -1,0 +1,1280 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use Carp;
+
+my $tool = Tool->new();
+$tool->run();
+
+exit;
+
+#--------------------------------
+
+package Tool;
+use strict;
+use warnings;
+use Carp;
+
+sub Tool::new
+{
+    my ($class,@args) = @_;
+    my $self = @args ? {@args} : {};
+    bless $self, ref($class) || $class;
+
+    $$self{usage} = 
+        "Usage: stats [COMMAND] [OPTIONS]\n" .
+        "Commands:\n" .
+        "   A, ANOVA                 \n" .
+        "   a, average               \n" .
+        "   B, Benjamini-Hochberg    \n" .
+        "   C, candlesticks          \n" .
+        "   c, correlation           \n" .
+        "   e, EarthMoversDistance   \n" .
+        "   h, histogram             \n" .
+        "   m, moving-average        \n" .
+        "   p, percentiles           \n" .
+        "   t, tstv                  \n" .
+        "   help                     This help message\n" .
+        "\n";
+
+    return $self;
+}
+
+sub Tool::throw
+{
+    my ($self,@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die $$self{usage};
+}
+
+sub Tool::run
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq 'A' or $arg eq 'ANOVA' ) { $$self{cmd} = ANOVA->new(); last; }
+        if ( $arg eq 'a' or $arg eq 'average' ) { $$self{cmd} = Average->new(); last; }
+        if ( $arg eq 'B' or $arg eq 'Benjamini-Hochberg' ) { $$self{cmd} = BenjaminiHochberg->new(); last; }
+        if ( $arg eq 'C' or $arg eq 'candlesticks' ) { $$self{cmd} = Candlesticks->new(); last; }
+        if ( $arg eq 'c' or $arg eq 'correlation' ) { $$self{cmd} = Correlation->new(); last; }
+        if ( $arg eq 'e' or $arg eq 'EarthMoversDistance' ) { $$self{cmd} = EMD->new(); last; }
+        if ( $arg eq 'h' or $arg eq 'histogram' ) { $$self{cmd} = Histogram->new(); last; }
+        if ( $arg eq 'm' or $arg eq 'moving-average' ) { $$self{cmd} = MovingAverage->new(); last; }
+        if ( $arg eq 'p' or $arg eq 'percentiles' ) { $$self{cmd} = Percentiles->new(); last; }
+        if ( $arg eq 't' or $arg eq 'tstv' ) { $$self{cmd} = TsTv->new(); last; }
+        $self->throw();
+    }
+    if ( !exists($$self{cmd}) ) { $self->throw(); }
+    $$self{cmd}->run();
+}
+
+#--------------------------------
+
+package Percentiles;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub Percentiles::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{usage} = 
+        "Usage: stats [p|percentiles] [OPTIONS] <float> <float> ...\n" .
+        "Options:\n" .
+        "   -a, --approx            \n" .
+        "   -d, --delta <float>     Print percentiles at step <delta> for QQ plot\n" .
+        "       --xyz               Group by identical x value and interpret z as count\n" .
+        "   -h, -?, --help          This help message.\n" .
+        "Example:\n" .
+        "   cat dat.txt | stats p 25 50 75\n" .
+        "\n";
+
+    return $self;
+}
+
+sub Percentiles::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-a' or $arg eq '--approx' ) { $$self{approx}=1; next; }
+        if ( $arg eq '-d' or $arg eq '--delta' ) { $$self{delta}=shift(@ARGV); next; }
+        if ( $arg eq '--xyz' ) { $$self{xyz}=1; next; }
+        if ( $arg eq '-h' or $arg eq '-?' or $arg eq '--help' ) { $self->throw; }
+        if ( $arg=~/^\d+(?:\.\d+)?$/ ) { push @{$$self{percentiles}},$arg; next; }
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+    if ( exists($$self{delta}) )
+    {
+        for (my $i=0; $i<=100; $i+=$$self{delta}) { push @{$$self{percentiles}},$i; }
+    }
+    if ( !exists($$self{percentiles}) ) { $self->throw(); }
+    for (my $i=0; $i<@{$$self{percentiles}}; $i++)
+    {
+        $$self{percentiles}[$i] /= 100.;
+    }
+}
+
+sub Percentiles::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+    my @vals;
+    my $p;
+    while (defined(my $line = $reader->next_line))
+    {
+        push @vals,$line;
+        if ( $$self{approx} ) { $self->add($line); }
+    }
+
+    my @out;
+    if ( $$self{approx} )
+    {
+        for my $p (@{$$self{percentiles}})
+        {
+            push @out, sprintf("%.1f",$self->report($p));
+        }
+        print join("\t",@out) . "\t(approx)\n";
+    }
+
+    my @svals = sort {$a<=>$b} @vals;
+
+    if ( $$self{delta} )
+    {
+        for my $p (@{$$self{percentiles}})
+        {
+            print "$p\t".$self->percentile(\@svals,$p)."\n";
+        }
+    }
+    else
+    {
+        @out = ();
+        for my $p (@{$$self{percentiles}})
+        {
+            push @out,$self->percentile(\@svals,$p);
+        }
+        print join("\t",@out) . "\t(exact)\n";
+    }
+}
+
+# Space-Efficient Online Computation of Quantile Summaries
+#   http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.90.8495&rep=rep1&type=pdf
+# How to Summarize the Universe
+#   http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.75.4895&rep=rep1&type=pdf
+# Numerical Recipes 8.5.2 "Single-pass estimation of arbitrary quantiles" p. 435
+#   http://apps.nrbook.com/empanel/index.html#
+sub Percentiles::add
+{
+    my ($self,$val) = @_;
+    if ( !$$self{dbuf} )
+    {
+        # init
+        my @pval;
+        for (my $i=85; $i<166; $i++) { $pval[$i] = ($i-75)/100.; }
+        for (my $i=84; $i>=0; $i--)
+        {
+            $pval[$i] = 0.87191909 * $pval[$i+1];
+            $pval[250-$i] = 1 - $pval[$i];
+        }
+        $$self{pval} = \@pval;
+        $$self{dbuf} = [];
+        $$self{qile} = [];
+        for (my $i=0; $i<@pval; $i++) { $$self{qile}[$i] = 0; }
+        $$self{q0}   = $val;
+        $$self{qm}   = $val;
+        $$self{nbuf} = 1_000;
+        $$self{nq}   = scalar @pval;
+        $$self{nt}   = 0;
+    }
+    # update extremes
+    if ( $val < $$self{q0} ) { $$self{q0} = $val; }
+    if ( $val > $$self{qm} ) { $$self{qm} = $val; }
+
+    my $dbuf = $$self{dbuf};
+    push @$dbuf, $val;
+    if ( @$dbuf == $$self{nbuf} ) { $self->update(); }
+}
+
+sub Percentiles::report
+{
+    my ($self,$p) = @_;
+
+    if ( @{$$self{dbuf}} ) { $self->update(); }
+    my $qile = $$self{qile};
+    my $pval = $$self{pval};
+    my $nq = $$self{nq};
+    my $jl = 0;
+    my $jh = $$self{nq} - 1;
+    while ( $jh - $jl > 1 )
+    {
+        my $j = ($jh + $jl) >> 1;
+        if ( $p > $$pval[$j] ) { $jl = $j; }
+        else { $jh = $j; }
+    }
+    my $j = $jl;
+
+    # interpolate
+    my $q = $$qile[$j] + ($$qile[$j+1]-$$qile[$j])*($p-$$pval[$j])/($$pval[$j+1]-$$pval[$j]);
+    if ( $$qile[$nq-1] < $q ) { $q = $$qile[$nq-1]; }
+    return $$qile[0] > $q ? $$qile[0] : $q;
+}
+
+sub Percentiles::update
+{
+    my ($self) = @_;
+
+    my $nt = $$self{nt};
+    my $nd = @{$$self{dbuf}};
+    my $nq = $$self{nq};
+    my $dbuf = $$self{dbuf};
+    @$dbuf = sort { $a<=>$b } @$dbuf;
+
+    my $qile = $$self{qile};
+    my @newqile;   # new quantiles after update
+    for (my $i=0; $i<$nq; $i++) { $newqile[$i] = 0; }
+    $$qile[0]     = $$self{q0};
+    $newqile[0]   = $$self{q0};
+    $$qile[$nq-1] = $$self{qm};
+    $newqile[-1]  = $$self{qm};
+    my $qold      = $$self{q0};
+    my $qnew      = $$self{q0};
+    my $tnew      = 0;
+    my $told      = 0;
+    my $jd = 0;
+    my $jq = 1;
+
+    my $pval = $$self{pval};
+    $$pval[0]     = 0.5/($nt+$nd) < 0.5*$$pval[1] ? 0.5/($nt+$nd) : 0.5*$$pval[1];
+    $$pval[$nq-1] = 1-0.5/($nt+$nd) > 0.5*(1+$$pval[$nq-2]) ? 1-0.5/($nt+$nd) : 0.5*(1+$$pval[$nq-2]);
+
+    # loop over target p-values for interpolation
+    for (my $iq=1; $iq<$nq-1; $iq++)
+    {
+        my $tgt = ($nt+$nd)*$$pval[$iq];
+
+        # Find a succession of abcissa-ordinate pairs (qnew,tnew) that
+        # are the discontinuity of value or slope and break to perform
+        # an interpolation as we cross each target
+        if ( $tnew < $tgt )
+        {
+            while (1)
+            {
+                if ( $jq<$nq && ($jd >= $nd or $$qile[$jq] < $$dbuf[$jd]) )
+                {
+                    # found slope discontinuity from old cdf
+                    $qnew = $$qile[$jq];
+                    $tnew = $jd + $nt * $$pval[$jq++];
+                    if ( $tnew >= $tgt ) { last; }
+                }
+                else
+                {
+                    # found value discontinuity from batch cdf
+                    $qnew = $$dbuf[$jd];
+                    $tnew = $told;
+
+                    if ( $$qile[$jq] > $$qile[$jq-1] )
+                    {
+                        $tnew += $nt * ($$pval[$jq] - $$pval[$jq-1]) * ($qnew - $qold)/($$qile[$jq] - $$qile[$jq-1]);
+                    }
+                    $jd++;
+                    if ( $tnew >= $tgt ) { last; }
+                    $told = $tnew++;
+                    $qold = $qnew;
+                    if ( $tnew >= $tgt ) { last; }
+                }
+                $told = $tnew;
+                $qold = $qnew;
+            }
+        }
+        # new interpolation
+        $newqile[$iq] = $tnew == $told ? 0.5* ($qold+$qnew) : $qold + ($qnew - $qold)*($tgt-$told)/($tnew-$told);
+        $told = $tnew;
+        $qold = $qnew;
+    }
+    @{$$self{qile}} = @newqile;
+    $$self{nt} += $nd;
+    @{$$self{dbuf}} = ();
+}
+
+
+# This code is broken
+# P2 Algorithm for Dynamic Calculation of Quantiles and Histograms Without Storing Observations 
+#   http://www.cs.wustl.edu/%7Ejain/papers/ftp/psqr.pdf
+#
+#   sub Percentiles::p2_quantile
+#   {
+#       my ($self,$p,$val) = @_;
+#       if ( !exists($$self{p2}{$p}) ) { $$self{p2}{$p} = { q=>[], n=>[], nd=>[], dn=>[] }; }
+#       my $qs  = $$self{p2}{$p}{q};        # heights
+#       my $ns  = $$self{p2}{$p}{n};        # positions
+#       my $nds = $$self{p2}{$p}{nd};       # desired positions
+#       my $dns = $$self{p2}{$p}{dn};       # increments dN
+#   
+#       if ( @$qs<5 )
+#       {
+#           push @$qs, $val;
+#           if ( @$qs==5 )
+#           {
+#               @$qs  = sort { $a<=>$b } @$qs;
+#               @$ns  = (1,2,3,4,5);
+#               @$nds = (1,1+2*$p,1+4*$p,3+2*$p,5);
+#               @$dns = (0,$p/2,$p,(1+$p)/2,1);
+#           }
+#           return undef;
+#       }
+#   
+#       my $k;
+#       if ( $val<$$qs[0] ) { $$qs[0] = $val; $k = 0; }
+#       else
+#       {
+#           for ($k=0; $k<5; $k++) { if ( $val <= $$qs[$k] ) { last; } }
+#           if ( $k==5 ) { $$qs[4] = $val; $k = 3; }
+#       }
+#       for (++$k; $k<5; $k++) { $$ns[$k]++; }
+#       for ($k=0; $k<5; $k++) { $$nds[$k] += $$dns[$k]; }
+#   
+#       my @qs = @$qs;
+#       my @ns = @$ns;
+#       for ($k=1; $k<4; $k++)
+#       {
+#           my $dk  = $$nds[$k] - $$dns[$k];
+#           my $nkp = $$ns[$k+1] - $$ns[$k];
+#           my $nkm = $$ns[$k-1] - $$ns[$k];
+#           if ( ($dk < 1 or $nkp <= 1) && ($dk > -1 or $nkm >= -1) ) { next; }
+#   
+#           if ( $dk<0 ) { $dk = -1; }
+#           elsif ( $dk>0 ) { $dk = 1; }
+#           my $qk = $$qs[$k] + $dk/($$ns[$k+1] - $$ns[$k-1]) * (($nkm + $dk)*($$qs[$k+1] - $$qs[$k])/$nkp + ($$qs[$k] - $$qs[$k-1])*($nkp - $dk)/$nkm);
+#   
+#           if ( $$qs[$k-1] < $qk && $qk < $$qs[$k+1] ) { $qs[$k] = $qk; } #print "(par) q[$k]: $$qs[$k] -> $qs[$k]\n"; }
+#           else { $qs[$k] = $$qs[$k] + $dk*($$qs[$k+$dk] - $$qs[$k])/($$ns[$k+$dk] - $$ns[$k]); } #print "(lin) q[$k]: $$qs[$k] -> $qs[$k]\n";  }
+#   
+#           $ns[$k] += $dk;
+#       }
+#       @$qs = @qs;
+#       @$ns = @ns;
+#       for (my $i=0; $i<5; $i++) { printf "%4.2f\t", $$qs[$i]; }
+#       print join("\t", '-', @$ns, '-', @$nds), "\tin $val\n";
+#       return $$qs[2];
+#   }
+
+sub Percentiles::run_xyz
+{
+    my ($self,$vals) = @_;
+    my @group;
+    for my $val (@$vals)
+    {
+        my @items = split(/\s+/,$val);
+        if ( scalar @items != 3 ) { $self->throw("Could not parse the line: $val\n"); }
+        if ( @group && $group[0][0] ne $items[0] )
+        {
+            my @out;
+            for my $p (@{$$self{percentiles}})
+            {
+                push @out,$self->hist_percentile(\@group,$p);
+            }
+            print $group[0][0],"\t",join("\t",@out) . "\n";
+            @group = ();
+        }
+        push @group, \@items;
+    }
+    if ( @group ) 
+    {
+        my @out;
+        for my $p (@{$$self{percentiles}})
+        {
+            push @out,$self->hist_percentile(\@group,$p);
+        }
+        print $group[0][0],"\t",join("\t",@out) . "\n";
+    }
+}
+
+sub Percentiles::percentile
+{
+    my ($self,$vals,$p) = @_;
+    my $N = @$vals;
+    my $n = $p*($N+1);
+    my $k = int($n);
+    my $d = $n-$k;
+    if ( $k<=0 ) { return $$vals[0]; }
+    if ( $k>=$N ) { return $$vals[$N-1]; }
+    return $$vals[$k-1] + $d*($$vals[$k] - $$vals[$k-1]);
+}
+
+sub Percentiles::hist_percentile
+{
+    my ($self,$vals,$p) = @_;
+    my $N = 0;
+    for my $val (@$vals) { $N += $$val[2]; }
+    my $n = $p*($N+1);
+    my $k = int($n);
+    my $d = $n-$k;
+    if ( $k<=0 ) { return $$vals[0][1]; }
+    if ( $k>=$N ) { return $$vals[-1][1]; }
+    my $cnt;
+    for (my $i=0; $i<@$vals; $i++)
+    { 
+        $cnt += $$vals[$i][2];
+        if ( $cnt>=$k ) { return $$vals[$i][1]; }
+    }
+    $self->throw("FIXME: this should not happen [percentile]\n");
+}
+
+
+
+#--------------------------------
+
+package ANOVA;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+use lib '/nfs/users/nfs_p/pd3/sandbox/svn/install/perl/lib/perl5';
+#use Statistics::ANOVA 0.061;
+
+sub ANOVA::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{usage} = 
+        "Usage: stats [A|ANOVA] [OPTIONS] <val> <val> - <val> <val> \n" .
+        "       stats [A|ANOVA] [OPTIONS] <col> <col> - <col> <col>  # 1-based\n" .
+        "Options:\n" .
+        "   -h, -?, --help                  This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub ANOVA::parse_params
+{
+    my ($self) = @_;
+
+    $$self{read_stdin} = -t STDIN ? 0 : 1;
+    $$self{args} = join(' ',@ARGV); 
+
+    my $grp = 0;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-h' or $arg eq '-?' or $arg eq '--help' ) { $self->throw; }
+        if ( $arg eq '-' ) { $grp++; next; }
+        if ( !($arg=~/^\d+(\.\d+)?$/) ) { $self->throw("Expected 1-based column index, got [$arg]\n"); }
+        push @{$$self{groups}{$grp}},$arg-1; next; 
+    }
+    #$$self{ano} = Statistics::ANOVA->new();
+}
+
+sub ANOVA::parse_line
+{
+    my ($self,$line) = @_;
+    my %groups;
+    my @vals = split(/\s+/,$line);
+    if ( exists($$self{groups}) )
+    {
+        for my $group (keys %{$$self{groups}})
+        {
+            for my $idx (@{$$self{groups}{$group}})
+            {
+                if ( !exists($vals[$idx]) ) { $self->throw("Uh, fewer fields than expected. Asked for $idx+1, but found only $#vals+1\n"); }
+                push @{$groups{$group}}, $vals[$idx];
+            }
+        }
+    }
+    else
+    {
+        my $grp = 0;
+        for my $arg (split(/\s+/,$line))
+        {
+            if ( $arg eq '-' ) { $grp++; next; }
+            push @{$groups{$grp}}, $arg; 
+        }
+    }
+    return \%groups;
+}
+
+sub ANOVA::sanitize_groups
+{
+    my ($self,$groups) = @_;
+
+    # ANOVA does not like identical values. If all values are identical within a group, add a small (0.01%) difference
+    for my $grp (keys %$groups)
+    {
+        my $differ = 0;
+        for my $val (@{$$groups{$grp}})
+        {
+            if ( $$groups{$grp}[0] != $val ) { $differ=1; last; }
+        }
+        if ( !$differ && @{$$groups{$grp}}>1 ) 
+        { 
+            if ( $$groups{$grp}[0] != 0 ) { $$groups{$grp}[0] *= 1.0001;  }
+            else { $$groups{$grp}[0] = 1e-10; }
+        }
+    }
+}
+
+sub ANOVA::run_anova
+{
+    my ($self,$groups,$line) = @_;
+
+    $self->sanitize_groups($groups);
+    $$self{ano}->load_data($groups);
+
+    my $ok=0;
+    eval { $$self{ano}->anova_indep(); $ok=1; };
+    if ( !$ok ) { use Data::Dumper; print STDERR Dumper($groups,$line); $$self{ano}{f_value}=0; $$self{ano}{p_value}=1; exit; }
+
+    printf "%.3f\t%.3f\t%s\n",$$self{ano}{f_value},$$self{ano}{p_value},$line;
+}
+
+sub ANOVA::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+
+
+    if ( $$self{read_stdin} )
+    {
+        my $reader = Reader->new();
+        while (defined(my $line=$reader->next_line))
+        {
+            my $groups = $self->parse_line($line);
+            $self->run_anova($groups,$line);
+        }
+    }
+    else
+    {
+        $self->run_anova($$self{groups},$$self{args});
+    }
+}
+
+
+#--------------------------------
+
+package TsTv;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub TsTv::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{win}  = 10;
+    $$self{cols} = [ 1 ];
+
+    $$self{usage} = 
+        "About: type (A>C) count\n" .
+        "Usage: stats [t|tstv] [OPTIONS] \n" .
+        "Options:\n" .
+        "   -h, -?, --help              This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub TsTv::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+}
+
+sub TsTv::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+    my $vals   = $reader->read_file();
+    my %muts = map { $_=>1 } (qw(A>C A>G A>T C>A C>G C>T G>A G>C G>T T>A T>C T>G));
+    my %ts   = map { $_=>1 } ((qw(A>G G>A C>T T>C)));
+    my $nts = 0;
+    my $ntv = 0;
+    for my $line (@$vals)
+    {
+        my ($type,$cnt) = split(/\s+/,$line);
+        if ( !exists($muts{$type}) or !($cnt=~/^\d+$/) ) { $self->throw("Cannot parse: $line"); }
+        if ( exists($ts{$type}) ) { $nts += $cnt; }
+        else { $ntv += $cnt; }
+    }
+    printf "%.2f\n", $ntv ? $nts/$ntv : 0;
+}
+
+
+#--------------------------------
+
+package EMD;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub EMD::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{win}  = 10;
+    $$self{cols} = [ 1 ];
+
+    $$self{usage} = 
+        "About: stream in two distributions (x,y) separated by a line starting with the dash symbol'\n" .
+        "Usage: stats [e|EarthMoversDistance] [OPTIONS] \n" .
+        "Options:\n" .
+        "   -h, -?, --help              This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub EMD::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+}
+
+sub EMD::normalize
+{
+    my ($self,$dat) = @_;
+    my $sum = 0;
+    for my $val (@$dat) { $sum += $$val[1]; }
+    if ( !$sum ) { return; }
+    for my $val (@$dat) { $$val[1] /= $sum; }
+}
+
+sub EMD::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+
+    my @dists;
+    my $vals = [];
+    while (defined(my $line = $reader->next_line))
+    {
+        if ( $line=~/^-/ ) { push @dists,$vals; $vals = []; next; }
+        my ($x,$y) = split(/\s+/,$line);
+        push @$vals,[$x,$y];
+    }
+    push @dists,$vals;
+    if ( @dists!=2 ) { $self->throw("Expected two data sets\n"); }
+    if ( @{$dists[0]}!=@{$dists[1]} ) { $self->throw("Need the same number of values\n"); }
+    
+    my $a = $dists[0];
+    my $b = $dists[1];
+    $self->normalize($a);
+    $self->normalize($b);
+
+    my @emd  = (0);
+    my $dist = 0;
+    for (my $i=0; $i<@$a; $i++)
+    {
+        if ( $$a[$i][0] != $$b[$i][0] ) { $self->throw("Need the same bins: $$a[$i][0] != $$b[$i][0]\n"); }
+        $emd[$i+1] = $emd[$i] + $$a[$i][1] - $$b[$i][1];
+        $dist += $emd[$i+1];
+    }
+    printf "%f\n",abs($dist);
+}
+
+
+#--------------------------------
+
+package MovingAverage;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub MovingAverage::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{win}  = 10;
+    $$self{cols} = [ 1 ];
+
+    $$self{usage} = 
+        "Usage: stats [m|MovingAverage] [OPTIONS] \n" .
+        "Options:\n" .
+        "   -c, --columns <list>        List of 1-based column indexes to process\n" .
+        "   -w, --window <int>          Averaging window size [$$self{win}]\n" .
+        "   -h, -?, --help              This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub MovingAverage::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-w' or $arg eq '--window' ) { $$self{win} = shift(@ARGV); next; }
+        if ( $arg eq '-c' or $arg eq '--columns' ) 
+        { 
+            $arg = shift(@ARGV); 
+            $$self{cols} = [ split(/,/,$arg) ];
+            next;
+        }
+        if ( $arg eq '-?' or $arg eq '-h' or $arg eq '--help' ) { $self->throw(); }
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+    if ( !exists($$self{cols}) ) { $self->throw("Missing the -c option\n"); }
+    for (my $i=0; $i<@{$$self{cols}}; $i++)
+    {
+        $$self{cols}[$i]--; # 1-based to 0-based index
+    }
+}
+
+sub MovingAverage::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+
+    my $k1 = int($$self{win}/2);
+    my $k2 = $$self{win} - $k1;
+
+    my @cols = @{$$self{cols}};
+    my @buf = ();
+    my @sum = ();
+    for (my $i=0; $i<$k2; $i++)
+    {
+        my $line = $reader->next_line();
+        if ( !defined $line ) { $self->throw("Too few lines or the window is too big"); }
+
+        my @items = split(/\s+/,$line);
+        chomp($items[-1]);
+        push @buf, \@items;
+        for my $icol (@cols)
+        {
+            $sum[$icol] += $items[$icol];
+        }
+    }
+    my $nout = 0;
+    while (@buf)
+    {
+        my $i = $nout >=$k1 ? $k1 : $nout;
+        if ( $i>=@buf ) { last; }
+
+        my @out = @{$buf[$i]};
+        for my $icol (@cols)
+        {
+            $out[$icol] = $sum[$icol] / scalar @buf;
+        }
+        print join("\t",@out) . "\n";
+
+        if ( $nout++ >= $k1 )
+        {
+            my $out = shift(@buf);
+            for my $icol (@cols)
+            {
+                $sum[$icol] -= $$out[$icol];
+            }
+        }
+        my $line = $reader->next_line();
+        if ( defined $line )
+        {
+            my @items = split(/\s+/,$line);
+            chomp($items[-1]);
+            push @buf, \@items;
+            for my $icol (@cols)
+            {
+                $sum[$icol] += $items[$icol];
+            }
+        }
+    }
+}
+
+
+#--------------------------------
+
+package Average;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub Average::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{usage} = 
+        "Usage: stats [a|average] [OPTIONS] <int> <int> ...\n" .
+        "Options:\n" .
+        "   -h, -?, --help                  This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub Average::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+}
+
+sub Average::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+    my $vals   = $reader->read_file();
+
+    my $nvals = scalar @$vals;
+    my (@avg,@sum,@min,@max);
+    for my $val (@$vals)
+    {
+        my @items = split(/\s+/,$val);
+        if ( scalar @avg && scalar @avg != scalar @items ) { $self->throw("FIXME: not a column-based file?\n"); }
+        for (my $i=0; $i<@items; $i++)
+        {
+            $avg[$i] += $items[$i]/$nvals;
+            $sum[$i] += $items[$i];
+            if ( !exists($min[$i]) or $items[$i]<$min[$i] ) { $min[$i] = $items[$i]; }
+            if ( !exists($max[$i]) or $items[$i]>$max[$i] ) { $max[$i] = $items[$i]; }
+        }
+    }
+    my @sd;
+    for my $val (@$vals)
+    {
+        my @items = split(/\s+/,$val);
+        for (my $i=0; $i<@items; $i++)
+        {
+            $sd[$i] += ($items[$i]-$avg[$i])**2/$nvals;
+        }
+    }
+    for (my $i=0; $i<@sd; $i++) { $sd[$i] = sqrt($sd[$i]); }
+
+    print join("\t","avg",@avg),"\n";
+    print join("\t","std_dev",@sd),"\n";
+    print join("\t","min",@min),"\n";
+    print join("\t","max",@max),"\n";
+    print join("\t","sum",@sum),"\n";
+    print join("\t","n",scalar @$vals),"\n";
+}
+
+
+#--------------------------------
+
+package Histogram;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub Histogram::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{usage} = 
+        "Usage: stats [h|histogram] [OPTIONS]\n" .
+        "Options:\n" .
+        "   -a, --all-bins           Print all bins, even with zero contribution\n" .
+        "   -b, --bins <list>        The bins to use\n" .
+        "   -g, --group-by <int>     Precomputed histograms, group by the column (1-based)\n" .
+        "   -s, --size <float>       Size of the bins\n" .
+        "   -h, -?, --help           This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub Histogram::parse_params
+{
+    my ($self) = @_;
+    $$self{bin_size} = 1;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-a' or $arg eq '--all-bins' ) { $$self{print_all_bins} = 1; next }
+        if ( $arg eq '-b' or $arg eq '--bins' ) { $$self{bins} = shift(@ARGV); next }
+        if ( $arg eq '-s' or $arg eq '--size' ) { $$self{bin_size} = shift(@ARGV); next }
+        if ( $arg eq '-g' or $arg eq '--group-by' ) { $$self{group_by} = shift(@ARGV); next }
+        if ( $arg eq '-?' or $arg eq '-h' or $arg eq '--help' ) { $self->throw(); }
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+    if ( $$self{bins} )
+    {
+        $$self{bins} = [ split(/,/,$$self{bins}) ];
+    }
+}
+
+sub Histogram::val2bin
+{
+    my ($self,$val,$bin_size,$max) = @_;
+
+    if ( defined $max )
+    {
+        if ( $val < -$max ) { $val = -$max; }
+        elsif ( $val > $max ) { $val = $max; }
+    }
+
+    my $tmp = $bin_size * int($val / $bin_size);
+    if ( $val >= 0 )
+    {
+        if ( $val - $tmp > $bin_size*0.5 ) { $tmp += $bin_size; }
+    }
+    else
+    {
+        if ( $tmp - $val > $bin_size*0.5 ) { $tmp -= $bin_size; }
+    }
+    my $bin = defined $max ? ($tmp + $max)/$bin_size : $tmp/$bin_size;
+    return int($bin);
+}
+sub Histogram::bin2val
+{
+    my ($self,$bin,$bin_size,$max) = @_;
+    my $val = $bin * $bin_size;
+    if ( defined $max ) { $val -= $max; }
+    return $val;
+}
+
+sub Histogram::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+
+    my $reader = Reader->new();
+    if ( $$self{group_by} ) 
+    { 
+        return $self->run_group_by($reader); 
+    }
+    if ( $$self{bins} )
+    {
+    }
+
+    my $nvals  = 0;
+    my $line;
+    while (defined ($line=$reader->next_line))
+    {
+        my $bin = $self->val2bin($line,$$self{bin_size},undef);
+        $$self{data}{$bin}++;
+        $nvals++;
+    }
+    my @bins = sort {$a<=>$b} keys %{$$self{data}};
+    if ( $$self{print_all_bins} )
+    {
+        my $imin = $bins[0];
+        my $imax = $bins[-1];
+        @bins = ();
+        for (my $i=$imin; $i<=$imax; $i++) { push @bins, $i; }
+    }
+    my $sum;
+    for my $i (@bins)
+    {
+        my $val = $self->bin2val($i,$$self{bin_size},undef);
+        my $cnt = exists($$self{data}{$i}) ? $$self{data}{$i} : 0;
+        $sum += $cnt;
+        print $i,"\t",$val,"\t",$cnt,"\t",$sum*100./$nvals,"\t",$cnt*100./$nvals,"\n";
+    }
+}
+
+sub Histogram::run_group_by
+{
+    my ($self,$reader) = @_;
+    #my %hist;
+    #my $idx = $$self{group_by} - 1;
+    #while (defined ($line=$reader->next_line))
+    #{
+    #    my @items = split(/\s+/,$val);
+    #    if ( scalar @items < $idx ) { $self->throw("Too few items on line [$val]\n"); }
+
+    #    my $key = $items[$idx];
+    #    $hist{$key}[$idx] = $key;
+    #    for (my $i=0; $i<@items; $i++)
+    #    {
+    #        if ( $i==$idx ) { next; }
+    #        $hist{$key}[$i] += $items[$i];
+    #    }
+    #}
+
+    #for my $key (sort keys %hist)
+    #{
+    #    print join("\t",@{$hist{$key}}),"\n";
+    #}
+}
+
+
+#--------------------------------
+
+package Correlation;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub Correlation::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{usage} = 
+        "About: On input expects two columns. On output prints r and r^2\n" .
+        "Usage: stats [c|correlation] [OPTIONS]\n" .
+        "Options:\n" .
+        "   -h, -?, --help                  This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub Correlation::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-?' or $arg eq '-h' or $arg eq '--help' ) { $self->throw(); }
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+}
+
+sub Correlation::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+
+    my (@x,@y,$mx,$my);
+    while (defined(my $line = $reader->next_line))
+    {
+        my ($x,$y) = split(/\s+/,$line);
+        chomp($y);
+        push @x,$x;
+        push @y,$y;
+        $mx += $x;
+        $my += $y;
+    }
+    $mx /= scalar @x;
+    $my /= scalar @y;
+    my ($xydev,$sxdev,$sydev);
+    for (my $i=0; $i<@x; $i++)
+    {
+        $sxdev += ($x[$i] - $mx)**2;
+        $sydev += ($y[$i] - $my)**2;
+        $xydev += ($x[$i] - $mx)*($y[$i] - $my);
+    }
+    my $r = $xydev / (sqrt($sxdev)*sqrt($sydev));
+    print "# R\tR^2\n";
+    printf "%f\t%f\n", $r,$r**2;
+}
+
+#--------------------------------
+
+package BenjaminiHochberg;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub BenjaminiHochberg::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{threshold} = 0.1;
+    $$self{usage} = 
+        "About: On input list of P-values\n" .
+        "Usage: stats [B|BenjaminiHochberg] [OPTIONS]\n" .
+        "Options:\n" .
+        "   -f, --filter <float>        P-value threshold applied to pre-filter tests.\n" .
+        "   -n, --ntests <int>          Total number of tests.\n" .
+        "   -t, --threshold <float>     Desired FDR treshold [$$self{threshold}]\n" .
+        "   -h, -?, --help              This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub BenjaminiHochberg::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-t' or $arg eq '--threshold' ) { $$self{threshold} = shift(@ARGV); next; }
+        if ( $arg eq '-f' or $arg eq '--filter' ) { $$self{filter} = shift(@ARGV); next; }
+        if ( $arg eq '-n' or $arg eq '--ntests' ) { $$self{ntests} = shift(@ARGV); next; }
+        if ( $arg eq '-?' or $arg eq '-h' or $arg eq '--help' ) { $self->throw(); }
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+    if ( $$self{filter} && !$$self{ntests} ) { $self->throw("Expected -n with -f\n"); }
+    if ( !$$self{filter} && $$self{ntests} ) { $self->throw("Expected -f with -n\n"); }
+}
+
+sub BenjaminiHochberg::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+    my $vals   = $reader->read_file();
+
+    my $ntests = $$self{ntests} ? $$self{ntests} : scalar @$vals;
+    my $filter = $$self{filter} ? $$self{filter} : 0;
+    my $fdr = $$self{threshold};
+    if ( $$self{filter} )
+    {
+        # a pre-filtered set with a p-value cutoff of P, in the worst-case scenario one can still make a safe FDR estimate up to P.
+        if ( $$self{filter} < $fdr ) { $self->throw("With cutoff $$self{filter}, the maximum FDR is $$self{filter}\n"); }
+    }
+
+    my @vals = sort { $b<=>$a } @$vals;
+    for (my $i=0; $i<@vals; $i++)
+    {
+        my $rank = (scalar @vals) - $i;
+        my $bh = $fdr * $rank/$ntests;
+        if ( $vals[$i] <= $bh )
+        {
+            print "#BH\t[2] Rank\t[3] Benjamini-Hochberg cutoff\t[4] Nearest data point\n";
+            printf "BH\t$rank\t%e\t%e\n",$bh,$vals[$i]; 
+            return; 
+        }
+    }
+    print STDERR "All values are significant??!\n";
+}
+
+#--------------------------------
+
+package Candlesticks;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub Candlesticks::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+
+    $$self{usage} = 
+        "About: On input expects two columns, the segregating variable and the values. On output prints\n" .
+        "   x, min, p25, p50, p75, max. The input must be sorted -k1,1n -k2,2n \n" .
+        "Usage: stats [C|candlesticks] [OPTIONS]\n" .
+        "Options:\n" .
+        "   -h, -?, --help                  This help message.\n" .
+        "\n";
+
+    return $self;
+}
+
+sub Candlesticks::parse_params
+{
+    my ($self) = @_;
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-?' or $arg eq '-h' or $arg eq '--help' ) { $self->throw(); }
+        $self->throw("Unknown parameter \"$arg\". Run with -h for help.\n");
+    }
+}
+
+sub Candlesticks::run
+{
+    my ($self) = @_;
+    $self->parse_params();
+    my $reader = Reader->new();
+
+    my @buffer;
+    my $prev_x;
+    while (defined(my $line=readline($$reader{fh})))
+    {
+        my ($x,$y) = split(/\s+/,$line);
+        chomp($y);
+        if ( defined $prev_x && $x ne $prev_x ) 
+        { 
+            if ( $prev_x > $x ) { $self->throw("Uh, the first column not sorted: [$x] comes after [$prev_x].\n"); }
+            $self->flush($x,\@buffer); 
+        }
+        $prev_x = $x;
+        if ( scalar @buffer && $buffer[-1] > $y ) { $self->throw("Uh, the second column not sorted: [$x:$y] comes after [$x:$buffer[-1]].\n"); }
+        push @buffer, $y;
+    }
+    $self->flush($prev_x,\@buffer);
+}
+
+sub Candlesticks::flush
+{
+    my ($self,$x,$values) = @_;
+    my $min = $$values[0];
+    my $p25 = Percentiles::percentile($self,$values,25);
+    my $p50 = Percentiles::percentile($self,$values,50);
+    my $p75 = Percentiles::percentile($self,$values,75);
+    my $max = $$values[-1];
+    print "$x\t$min\t$p25\t$p50\t$p75\t$max\n";
+    @$values = ();
+}
+
+#--------------------------------
+
+package Reader;
+use base qw(Tool);
+use strict;
+use warnings;
+use Carp;
+
+sub Reader::new
+{
+    my ($class,@args) = @_;
+    my $self = $class->SUPER::new(@args);
+    bless($self,$class);
+    $$self{usage} = '';
+
+    $$self{fh} = \*STDIN;
+    if ( exists($$self{file}) ) 
+    {
+        open($$self{fh},'<',$$self{file}) or $self->throw("Expected 'file' parameter.\n");
+    }
+    return $self;
+}
+
+sub Reader::read_file
+{
+    my ($self) = @_;
+    my @vals = ();
+    while (defined(my $line=readline($$self{fh})))
+    {
+        chomp($line);
+        push @vals,$line;
+    }
+    return \@vals;
+}
+
+sub Reader::next_line
+{
+    my ($self) = @_;
+    while ( 1 )
+    {
+        my $line = readline($$self{fh});
+        if ( !defined $line ) { return undef; }
+        if ( $line=~/^#/ ) { next; }
+        if ( $line=~/^\s*$/ ) { next; }
+        chomp($line);
+        return $line;
+    }
+}
+
+
